@@ -5,6 +5,8 @@ const router = require("./routs/rout.js");
 const db = require("./db");
 app.use(cors());
 app.use(express.json());
+
+
 app.use("/api", router);
 const PORT = process.env.PORT || 5000;
 function launchServer() {
