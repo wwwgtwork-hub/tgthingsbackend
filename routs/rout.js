@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const rateLimit = require("express-rate-limit");
 const {
   buyerConfirmDeclineService,
   sellerConfirmDeclineService,
@@ -11,7 +12,7 @@ const { checkUserService } = require("../services/CheckUser.js");
 const { getUserFavouritesService } = require('../services/getUserFavourites.js');
 const { getUserItemsService } = require('../services/getUserItems.js');
 const { updateItemService } = require("../services/UpdateItemService.js");
-const { getOperations } = require('../services/operationsService.js');
+const { getOperations } = require('../services/OperationsService.js');
 const { getPaymentService } = require("../services/getPayment.js");
 const { buyerConfirmService, sellerConfirmService } = require('../services/confirmItemService.js');
 const { confirmItemService } = require('../services/confirmItem.js');
@@ -36,7 +37,51 @@ const { eq } = require('drizzle-orm');
 const { users } = require('../src/db/schema.js');
 
 
-router.post("/register", async (req, res) => {
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { status: "error", message: "Слишком много запросов, попробуйте позже" },
+});
+
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Слишком много попыток регистрации, попробуйте позже" },
+});
+
+const moneyLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Слишком много операций с балансом, попробуйте позже" },
+});
+
+const adminActionLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 50,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Слишком много административных действий, попробуйте позже" },
+});
+
+const notificationLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { status: "error", message: "Слишком много уведомлений, попробуйте позже" },
+});
+
+router.use(generalLimiter);
+
+// ------------------------------------
+
+router.post("/register", registerLimiter, async (req, res) => {
   try {
     const result = await registerUserService(req.body);
     res.status(201).json(result);
@@ -148,7 +193,7 @@ router.get("/payout/user/:userId", async (req, res) => {
   }
 });
 
-router.post("/sendNotification", async (req, res) => {
+router.post("/sendNotification", notificationLimiter, async (req, res) => {
   try {
     const { from, title, description, to } = req.body;
     const result = await sendNotificationService(from, title, description, to);
@@ -205,7 +250,7 @@ router.patch("/uploadItem", async (req, res) => {
   }
 });
 
-router.patch('/approveItem/:id', async (req, res) => {
+router.patch('/approveItem/:id', adminActionLimiter, async (req, res) => {
   try {
     const itemId = Number(req.params.id);
     if (isNaN(itemId)) return res.status(400).json({ status: "error", message: "Некорректный ID товара" });
@@ -227,7 +272,7 @@ router.post('/togglefavourite', async (req, res) => {
   }
 });
 
-router.post("/buyItem", async (req, res) => {
+router.post("/buyItem", moneyLimiter, async (req, res) => {
   try {
     const result = await buyItemService(req.body);
     return res.status(200).json({ success: true, message: "Item purchased (money locked in escrow)", data: result });
@@ -243,7 +288,7 @@ router.post("/buyItem", async (req, res) => {
   }
 });
 
-router.patch("/addCash", async (req, res) => {
+router.patch("/addCash", moneyLimiter, async (req, res) => {
   try {
     const { userId, amount } = req.body;
     const result = await addCashService(userId, amount);
@@ -335,7 +380,7 @@ router.patch("/editItem", async (req, res) => {
 });
 
 const MAX_PAYOUT = 5000;
-router.post("/requestPayout", async (req, res) => {
+router.post("/requestPayout", moneyLimiter, async (req, res) => {
   try {
     const result = await payoutService(req.body);
     return res.status(200).json({ success: true, newBalance: result.newBalance, wallet: result.wallet });
@@ -368,7 +413,7 @@ router.get("/payoutList", async (req, res) => {
   }
 });
 
-router.post('/ban/:telegramId', async (req, res) => {
+router.post('/ban/:telegramId', adminActionLimiter, async (req, res) => {
   try {
     const result = await banUserService(req.params.telegramId, req.body);
     return res.status(200).json(result);
@@ -377,7 +422,7 @@ router.post('/ban/:telegramId', async (req, res) => {
   }
 });
 
-router.post('/unban/:telegramId', async (req, res) => {
+router.post('/unban/:telegramId', adminActionLimiter, async (req, res) => {
   try {
     const result = await unbanUserService(req.params.telegramId);
     return res.status(200).json(result);
@@ -429,7 +474,7 @@ router.post('/decline/complete', async (req, res) => {
   }
 });
 
-router.post('/decline/admin', async (req, res) => {
+router.post('/decline/admin', adminActionLimiter, async (req, res) => {
   try {
     const { itemId, reason, telegramId } = req.body;
     if (!itemId) return res.status(400).json({ error: 'itemId is required' });

@@ -126,7 +126,18 @@ const premium = pgTable("premium", {
     .references(() => item.id, { onDelete: "cascade" }),
   durationMonths: integer("duration_months"),
 });
-
+const service = pgTable("service", {
+  id: serial("id").primaryKey(),
+  itemId: integer("item_id")
+    .notNull()
+    .references(() => item.id, { onDelete: "cascade" }),
+  serviceType: text("service_type").notNull(),       
+  deliveryTimeHours: integer("delivery_time_hours"), 
+  sellerUserName: text("seller_user_name").notNull(),
+  requirements: text("requirements"),                 
+  revisionsCount: integer("revisions_count").default(0),
+  serviceDetails: jsonb("service_details").notNull().default({}),
+});
 const stars = pgTable("stars", {
   id: serial("id").primaryKey(),
   itemId: integer("item_id")
@@ -214,6 +225,13 @@ const payout = pgTable("payout", {
     .notNull(),
 });
 
+const messageRelations = relations(message, ({ one }) => ({
+  author: one(users, {
+    fields: [message.from],
+    references: [users.telegramId],
+  }),
+}));
+
 const userRelations = relations(users, ({ many }) => ({
   userItems: many(item, { relationName: "seller" }),
   purchasedItems: many(item, { relationName: "buyer" }),
@@ -224,12 +242,9 @@ const userRelations = relations(users, ({ many }) => ({
   payments: many(payment),
   payouts: many(payout),
   userMessages: many(message),
-}));
-
-const messageRelations = relations(message, ({ one }) => ({
-  author: one(users, {
-    fields: [message.from],
-    references: [users.telegramId],
+  paymentMethods: many(paymentMethod, {
+    fields: [users.telegramId],
+    references: [paymentMethod.userId],
   }),
 }));
 
@@ -247,10 +262,13 @@ const itemRelations = relations(item, ({ one, many }) => ({
   accountDetails: one(account),
   premiumDetails: one(premium),
   nftAndGiftDetails: one(nftAndGift),
+  serviceDetails: one(service),   // ← новое
   reports: many(report),
   rates: many(rate),
-  favourites: many(favouriteItem),
-  paymentMethods: many(paymentMethod),
+}));
+
+const serviceRelations = relations(service, ({ one }) => ({
+  item: one(item, { fields: [service.itemId], references: [item.id] }),
 }));
 
 const accountRelations = relations(account, ({ one }) => ({
@@ -341,4 +359,6 @@ module.exports = {
   rateRelations,
   reportRelations,
   nftAndGiftRelations,
+  service,
+  serviceRelations
 };
