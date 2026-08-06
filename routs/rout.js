@@ -7,7 +7,9 @@ const {
   declineItemService,
   adminDeclineItemService,
 } = require('../services/declineItem.js');
-const { addCashService } = require("../services/addCash.js");
+const { addCoinsService } = require('../services/coinsService');
+const bot = require('../bot.js');
+const { addCashService } = require("../services/coinsService.js");
 const { checkUserService } = require("../services/CheckUser.js");
 const { getUserFavouritesService } = require('../services/getUserFavourites.js');
 const { getUserItemsService } = require('../services/getUserItems.js');
@@ -484,6 +486,40 @@ router.post('/decline/admin', adminActionLimiter, async (req, res) => {
     return res.status(400).json({ error: err.message });
   }
 });
+router.patch('/addCash', moneyLimiter, async (req, res) => {
+  try {
+    const { userId, amount } = req.body;
+    const result = await addCoinsService(userId, amount);
+    res.status(200).json({ success: true, data: result });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+ 
 
+router.post('/createStarsInvoice', moneyLimiter, async (req, res) => {
+  try {
+    const { userId, amount } = req.body;
+ 
+    if (!userId || !Number.isInteger(amount) || amount < 1) {
+      return res.status(400).json({ error: 'Некорректные параметры' });
+    }
+ 
+    const payload = JSON.stringify({ userId: String(userId), coins: amount });
+ 
+    const invoiceLink = await bot.createInvoiceLink(
+      'Пополнение баланса',
+      `Начисление ${amount} коинов`,
+      payload,
+      '',
+      'XTR',
+      [{ label: 'Коины', amount }],
+    );
+ 
+    res.json({ invoiceLink });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
 
 module.exports = router;

@@ -16,7 +16,7 @@ const users = pgTable("users", {
   userName: text("user_name").notNull().unique(),
   name: text("name").notNull(),
   rating: doublePrecision("rating").notNull().default(5.0),
-  moneyCount: integer("money_count").default(0).notNull(),
+  coins: integer("coins").default(0).notNull(), // было moneyCount — теперь коины (1 coin = 1 star)
   userItemsTotal: integer("user_items_total").default(0).notNull(),
   userItemsSelled: integer("user_items_selled").default(0).notNull(),
   userItemsBought: integer("user_items_bought").default(0).notNull(),
@@ -225,6 +225,21 @@ const payout = pgTable("payout", {
     .notNull(),
 });
 
+// Идемпотентность Stars-платежей: уникальный chargeId не даёт
+// начислить коины дважды при повторной доставке апдейта от Telegram.
+const starPayments = pgTable("star_payments", {
+  id: serial("id").primaryKey(),
+  chargeId: text("charge_id").unique().notNull(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.telegramId),
+  starsAmount: integer("stars_amount").notNull(),
+  coins: integer("coins").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
 const messageRelations = relations(message, ({ one }) => ({
   author: one(users, {
     fields: [message.from],
@@ -242,6 +257,7 @@ const userRelations = relations(users, ({ many }) => ({
   payments: many(payment),
   payouts: many(payout),
   userMessages: many(message),
+  starPayments: many(starPayments),
   paymentMethods: many(paymentMethod, {
     fields: [users.telegramId],
     references: [paymentMethod.userId],
@@ -262,7 +278,7 @@ const itemRelations = relations(item, ({ one, many }) => ({
   accountDetails: one(account),
   premiumDetails: one(premium),
   nftAndGiftDetails: one(nftAndGift),
-  serviceDetails: one(service),   // ← новое
+  serviceDetails: one(service),
   reports: many(report),
   rates: many(rate),
 }));
@@ -297,6 +313,10 @@ const paymentRelations = relations(payment, ({ one }) => ({
 
 const payoutRelations = relations(payout, ({ one }) => ({
   user: one(users, { fields: [payout.userId], references: [users.telegramId] }),
+}));
+
+const starPaymentsRelations = relations(starPayments, ({ one }) => ({
+  user: one(users, { fields: [starPayments.userId], references: [users.telegramId] }),
 }));
 
 const rateRelations = relations(rate, ({ one }) => ({
@@ -341,6 +361,7 @@ module.exports = {
   telegramChanel,
   premium,
   stars,
+  starPayments,
   nftAndGift,
   rate,
   report,
@@ -356,6 +377,7 @@ module.exports = {
   premiumRelations,
   paymentRelations,
   payoutRelations,
+  starPaymentsRelations,
   rateRelations,
   reportRelations,
   nftAndGiftRelations,
