@@ -7,9 +7,8 @@ const {
   declineItemService,
   adminDeclineItemService,
 } = require('../services/declineItem.js');
-const { addCoinsService } = require('../services/coinsService');
+const { addCoinsService, creditStarsPaymentService } = require('../services/coinsService');
 const bot = require('../bot.js');
-const { addCashService } = require("../services/coinsService.js");
 const { checkUserService } = require("../services/CheckUser.js");
 const { getUserFavouritesService } = require('../services/getUserFavourites.js');
 const { getUserItemsService } = require('../services/getUserItems.js');
@@ -158,7 +157,7 @@ router.get("/checkUser/:telegramId", async (req, res) => {
     if (!result) return res.status(404).json({ error: "User not found" });
     res.status(200).json(result);
   } catch (error) {
-    if (error.message.startsWith('ВЫ ЗАБАНЕНЫ')) {
+    if (error.message.startsWith('Вы забанены на нашей')) {
       return res.status(403).json({ error: error.message });
     }
     console.error('checkUser error:', error);
@@ -293,7 +292,7 @@ router.post("/buyItem", moneyLimiter, async (req, res) => {
 router.patch("/addCash", moneyLimiter, async (req, res) => {
   try {
     const { userId, amount } = req.body;
-    const result = await addCashService(userId, amount);
+    const result = await addCoinsService(userId, amount);
     res.status(200).json({ success: true, data: result });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -486,16 +485,7 @@ router.post('/decline/admin', adminActionLimiter, async (req, res) => {
     return res.status(400).json({ error: err.message });
   }
 });
-router.patch('/addCash', moneyLimiter, async (req, res) => {
-  try {
-    const { userId, amount } = req.body;
-    const result = await addCoinsService(userId, amount);
-    res.status(200).json({ success: true, data: result });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-});
- 
+
 
 router.post('/createStarsInvoice', moneyLimiter, async (req, res) => {
   try {

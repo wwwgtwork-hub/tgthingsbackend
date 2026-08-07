@@ -16,7 +16,7 @@ const users = pgTable("users", {
   userName: text("user_name").notNull().unique(),
   name: text("name").notNull(),
   rating: doublePrecision("rating").notNull().default(5.0),
-  coins: integer("coins").default(0).notNull(), // было moneyCount — теперь коины (1 coin = 1 star)
+  moneyCount: integer("money_count").default(0).notNull(), 
   userItemsTotal: integer("user_items_total").default(0).notNull(),
   userItemsSelled: integer("user_items_selled").default(0).notNull(),
   userItemsBought: integer("user_items_bought").default(0).notNull(),
@@ -367,7 +367,6 @@ module.exports = {
   report,
   payment,
   payout,
-
   userRelations,
   messageRelations,
   itemRelations,
