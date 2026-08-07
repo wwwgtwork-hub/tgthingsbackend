@@ -5,15 +5,19 @@ const { checkBan } = require('./middlewares/checkBan');
 const MAX_PAYOUT = 5000;
 
 const payoutService = async (payoutData) => {
-  const { id, amount, wallet } = payoutData;
+  const { id, amount } = payoutData;
 
-  if (!id || !amount || !wallet) {
-    throw new Error("User ID, amount and wallet are required");
+  if (!id || !amount) {
+    throw new Error("User ID and amount are required");
   }
-  const checked = checkBan(id);
+
+  const banned = await checkBan(id);
+  if (banned) {
+    throw new Error("User is banned");
+  }
+
   const userId = String(id);
   const payoutAmount = parseFloat(amount);
-  const walletClean = String(wallet).trim();
 
   if (isNaN(payoutAmount) || payoutAmount <= 0) {
     throw new Error("Invalid payout amount");
@@ -43,7 +47,7 @@ const payoutService = async (payoutData) => {
 
     const updatedUser = await tx
       .update(users)
-      .set({ moneyCount: newBalance }) 
+      .set({ moneyCount: newBalance })
       .where(eq(users.telegramId, userId))
       .returning();
 
@@ -54,22 +58,18 @@ const payoutService = async (payoutData) => {
     await tx.insert(payout).values({
       userId,
       amount: payoutAmount,
-      wallet: walletClean,
       status: "pending",
       createdAt: new Date(),
     });
 
     return {
       newBalance: updatedUser[0].moneyCount,
-      wallet: walletClean,
     };
   });
 };
 
 async function getPayoutsListService() {
   try {
-
-
     const list = await db.select().from(payout);
 
     const totalAmount = list.reduce(
@@ -126,6 +126,6 @@ const getUserPayoutsService = async (userId) => {
 module.exports = {
   payoutService,
   getPayoutsListService,
-  nextPayoutService,      
-  getUserPayoutsService,  
+  nextPayoutService,
+  getUserPayoutsService,
 };
