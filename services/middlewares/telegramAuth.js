@@ -46,7 +46,7 @@ function verifyTelegramInitData(initData) {
 
   const authDate = Number(params.get("auth_date"));
   if (!authDate || Date.now() / 1000 - authDate > MAX_AUTH_AGE_SECONDS) {
-    return null; // stale/replayed initData
+    return null; 
   }
 
   const userJson = params.get("user");
@@ -65,11 +65,7 @@ function verifyTelegramInitData(initData) {
   }
 }
 
-/**
- * Express middleware: requires a valid, signed Telegram initData string.
- * Accepts it via header (preferred) or req.body.initData.
- * On success attaches req.telegramUser = { id, username, firstName }.
- */
+
 function requireTelegramAuth(req, res, next) {
   const initData = req.headers["x-telegram-init-data"] || req.body?.initData;
   const verified = verifyTelegramInitData(initData);

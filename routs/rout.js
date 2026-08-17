@@ -36,17 +36,9 @@ const { message } = require('../src/db/schema.js');
 const { db } = require('../db.js');
 const { eq } = require('drizzle-orm');
 const { users } = require('../src/db/schema.js');
-
-// TODO: confirm these paths match where the files actually live in your
-// project. requireAdmin.js in your codebase imports schema from
-// "../../schema.js" while everything else (rout.js, isSelfOrAdmin.js) uses
-// "../src/db/schema.js" / "../../src/db/schema.js" — that's very likely a
-// bug (wrong path) in requireAdmin.js itself, worth double-checking that
-// file resolves to the same schema module as the rest of the app.
 const { requireTelegramAuth } = require("../middleware/TelegramAuth.js");
 const { requireAdmin } = require("../middleware/requireAdmin.js");
 const { isSelfOrAdmin } = require("../middleware/isSelfOrAdmin.js");
-
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
