@@ -1,8 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const rateLimit = require("express-rate-limit");
-const { requireTelegramAuth } = require("../middleware/telegramAuth.js");
-const { requireAdmin } = require("../middleware/requireAdmin.js");
+const { requireTelegramAuth } = require("../services/middlewares/telegramAuth.js");
+const { requireAdmin } = require("../services/middlewares/requireAdmin.js");
 const {
   buyerConfirmDeclineService,
   sellerConfirmDeclineService,
