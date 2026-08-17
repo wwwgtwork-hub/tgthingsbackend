@@ -1,6 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const rateLimit = require("express-rate-limit");
+const { requireTelegramAuth } = require("../middleware/telegramAuth.js");
+const { requireAdmin } = require("../middleware/requireAdmin.js");
 const {
   buyerConfirmDeclineService,
   sellerConfirmDeclineService,
@@ -81,19 +83,33 @@ const notificationLimiter = rateLimit({
 router.use(generalLimiter);
 
 // ------------------------------------
+// Small helper: only the resource owner or an admin may read a user-scoped
+// resource. Requires requireTelegramAuth to have run first.
+async function isSelfOrAdmin(req, targetTelegramId) {
+  if (req.telegramUser?.id === String(targetTelegramId)) return true;
+  const [user] = await db.select().from(users).where(eq(users.telegramId, req.telegramUser.id));
+  return !!user?.isAdmin;
+}
 
-router.post("/register", registerLimiter, async (req, res) => {
+// ------------------------------------
+
+router.post("/register", registerLimiter, requireTelegramAuth, async (req, res) => {
   try {
-    const result = await registerUserService(req.body);
+    const result = await registerUserService({ telegramUser: req.telegramUser });
     res.status(201).json(result);
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
 });
 
-router.post("/uploadItem", async (req, res) => {
+router.post("/uploadItem", requireTelegramAuth, async (req, res) => {
   try {
-    const newItem = await uploadItemService(req.body);
+    // Force the item's owner to be the authenticated user — never trust a
+    // sellerId/telegramId supplied in the body.
+    const newItem = await uploadItemService({
+      ...req.body,
+      sellerId: req.telegramUser.id,
+    });
     return res.status(201).json({ success: true, data: newItem });
   } catch (error) {
     if (error?.message === "All fields are required") {
@@ -104,8 +120,11 @@ router.post("/uploadItem", async (req, res) => {
   }
 });
 
-router.get('/operations/:userId', async (req, res) => {
+router.get('/operations/:userId', requireTelegramAuth, async (req, res) => {
   try {
+    if (!(await isSelfOrAdmin(req, req.params.userId))) {
+      return res.status(403).json({ error: "Доступ запрещён" });
+    }
     const data = await getOperations(req.params.userId);
     return res.status(200).json({ success: true, data });
   } catch (error) {
@@ -114,9 +133,19 @@ router.get('/operations/:userId', async (req, res) => {
   }
 });
 
-router.get('/getpayment/:id', async (req, res) => {
+router.get('/getpayment/:id', requireTelegramAuth, async (req, res) => {
   try {
     const data = await getPaymentService(req.params.id);
+    // getPaymentService should return the associated buyer/seller ids so we
+    // can check ownership here; if it doesn't yet, add that and gate access.
+    if (data?.buyerId && data?.sellerId) {
+      const isParty =
+        req.telegramUser.id === String(data.buyerId) ||
+        req.telegramUser.id === String(data.sellerId);
+      if (!isParty && !(await isSelfOrAdmin(req, req.telegramUser.id))) {
+        return res.status(403).json({ error: "Доступ запрещён" });
+      }
+    }
     res.status(200).json({ status: "success", data });
   } catch (e) {
     res.status(500).json({ status: "error", message: e.message });
@@ -151,8 +180,11 @@ router.get("/getItem/:id", async (req, res) => {
   }
 });
 
-router.get("/checkUser/:telegramId", async (req, res) => {
+router.get("/checkUser/:telegramId", requireTelegramAuth, async (req, res) => {
   try {
+    if (!(await isSelfOrAdmin(req, req.params.telegramId))) {
+      return res.status(403).json({ error: "Доступ запрещён" });
+    }
     const result = await checkUserService(req.params.telegramId);
     if (!result) return res.status(404).json({ error: "User not found" });
     res.status(200).json(result);
@@ -165,7 +197,7 @@ router.get("/checkUser/:telegramId", async (req, res) => {
   }
 });
 
-router.patch("/payout/next/:id", async (req, res) => {
+router.patch("/payout/next/:id", requireTelegramAuth, requireAdmin, async (req, res) => {
   try {
     const result = await nextPayoutService(req.params.id);
     return res.status(200).json({ success: true, data: result });
@@ -181,8 +213,11 @@ router.patch("/payout/next/:id", async (req, res) => {
   }
 });
 
-router.get("/payout/user/:userId", async (req, res) => {
+router.get("/payout/user/:userId", requireTelegramAuth, async (req, res) => {
   try {
+    if (!(await isSelfOrAdmin(req, req.params.userId))) {
+      return res.status(403).json({ error: "Доступ запрещён" });
+    }
     const result = await getUserPayoutsService(req.params.userId);
     return res.status(200).json({ success: true, ...result });
   } catch (error) {
@@ -194,17 +229,18 @@ router.get("/payout/user/:userId", async (req, res) => {
   }
 });
 
-router.post("/sendNotification", notificationLimiter, async (req, res) => {
+router.post("/sendNotification", notificationLimiter, requireTelegramAuth, async (req, res) => {
   try {
-    const { from, title, description, to } = req.body;
-    const result = await sendNotificationService(from, title, description, to);
+    const { title, description, to } = req.body;
+    // `from` is forced to the authenticated user, never trusted from the body.
+    const result = await sendNotificationService(req.telegramUser.id, title, description, to);
     res.status(200).json({ status: "success", message: "user notified", data: result });
   } catch (e) {
     res.status(500).json({ status: "error", message: e.message || String(e) });
   }
 });
 
-router.get("/getUnActive", async (req, res) => {
+router.get("/getUnActive", requireTelegramAuth, requireAdmin, async (req, res) => {
   try {
     const result = await getUnActiveItemsService();
     res.status(200).json({ status: "success", data: result });
@@ -213,10 +249,16 @@ router.get("/getUnActive", async (req, res) => {
   }
 });
 
-router.post("/deleteItem", async (req, res) => {
+router.post("/deleteItem", requireTelegramAuth, async (req, res) => {
   try {
     const rawId = req.body?.id;
     const reason = req.body?.reason;
+    const item = await getItemService(rawId);
+    if (!item) return res.status(404).json({ error: "Item not found" });
+    const owns = String(item.sellerId) === req.telegramUser.id;
+    if (!owns && !(await isSelfOrAdmin(req, req.telegramUser.id))) {
+      return res.status(403).json({ error: "Доступ запрещён" });
+    }
     const result = await deleteItemService(rawId, reason);
     return res.status(200).json({ success: true, message: "Item deleted successfully", data: result });
   } catch (error) {
@@ -227,8 +269,11 @@ router.post("/deleteItem", async (req, res) => {
   }
 });
 
-router.get('/getMessages/:telegramId', async (req, res) => {
+router.get('/getMessages/:telegramId', requireTelegramAuth, async (req, res) => {
   try {
+    if (!(await isSelfOrAdmin(req, req.params.telegramId))) {
+      return res.status(403).json({ error: "Доступ запрещён" });
+    }
     const messages = await db
       .select()
       .from(message)
@@ -240,9 +285,17 @@ router.get('/getMessages/:telegramId', async (req, res) => {
   }
 });
 
-router.patch("/uploadItem", async (req, res) => {
+router.patch("/uploadItem", requireTelegramAuth, async (req, res) => {
   try {
     const { id, ...rest } = req.body;
+    const item = await getItemService(id);
+    if (!item) return res.status(404).json({ error: "Item not found" });
+    const owns = String(item.sellerId) === req.telegramUser.id;
+    if (!owns && !(await isSelfOrAdmin(req, req.telegramUser.id))) {
+      return res.status(403).json({ error: "Доступ запрещён" });
+    }
+    // Never allow the client to reassign ownership of an item.
+    delete rest.sellerId;
     const updatedItem = await updateItemService(id, rest);
     return res.status(200).json({ success: true, data: updatedItem });
   } catch (error) {
@@ -251,7 +304,7 @@ router.patch("/uploadItem", async (req, res) => {
   }
 });
 
-router.patch('/approveItem/:id', adminActionLimiter, async (req, res) => {
+router.patch('/approveItem/:id', adminActionLimiter, requireTelegramAuth, requireAdmin, async (req, res) => {
   try {
     const itemId = Number(req.params.id);
     if (isNaN(itemId)) return res.status(400).json({ status: "error", message: "Некорректный ID товара" });
@@ -263,19 +316,22 @@ router.patch('/approveItem/:id', adminActionLimiter, async (req, res) => {
   }
 });
 
-router.post('/togglefavourite', async (req, res) => {
+router.post('/togglefavourite', requireTelegramAuth, async (req, res) => {
   try {
-    const { userTelegramId, itemId } = req.body;
-    const result = await toggleFavouriteService(userTelegramId, itemId);
+    const { itemId } = req.body;
+    // userTelegramId is forced to the authenticated user.
+    const result = await toggleFavouriteService(req.telegramUser.id, itemId);
     res.status(200).json({ message: "Toggled", action: result.action, data: result.data });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 });
 
-router.post("/buyItem", moneyLimiter, async (req, res) => {
+router.post("/buyItem", moneyLimiter, requireTelegramAuth, async (req, res) => {
   try {
-    const result = await buyItemService(req.body);
+    // buyerId is forced to the authenticated user — the client can never buy
+    // on behalf of someone else or make someone else pay.
+    const result = await buyItemService({ ...req.body, buyerId: req.telegramUser.id });
     return res.status(200).json({ success: true, message: "Item purchased (money locked in escrow)", data: result });
   } catch (error) {
     if (error.message === "Insufficient balance" || error.message === "Item is not active") {
@@ -289,7 +345,13 @@ router.post("/buyItem", moneyLimiter, async (req, res) => {
   }
 });
 
-router.patch("/addCash", moneyLimiter, async (req, res) => {
+// DANGER: this endpoint mints balance out of thin air. It must never be
+// reachable by an ordinary authenticated user — only by an admin doing a
+// manual correction, or (better) removed entirely in favor of crediting
+// balance exclusively from the verified Telegram Stars payment webhook
+// (see creditStarsPaymentService), which is driven by Telegram itself and
+// not by a client-supplied amount.
+router.patch("/addCash", moneyLimiter, requireTelegramAuth, requireAdmin, async (req, res) => {
   try {
     const { userId, amount } = req.body;
     const result = await addCoinsService(userId, amount);
@@ -299,41 +361,46 @@ router.patch("/addCash", moneyLimiter, async (req, res) => {
   }
 });
 
-router.post('/confirm/buyer', async (req, res) => {
+router.post('/confirm/buyer', requireTelegramAuth, async (req, res) => {
   try {
-    const { itemId, buyerId } = req.body;
-    if (!itemId || !buyerId) return res.status(400).json({ error: 'itemId and buyerId are required' });
-    const result = await buyerConfirmService({ itemId, buyerId });
+    const { itemId } = req.body;
+    if (!itemId) return res.status(400).json({ error: 'itemId is required' });
+    const result = await buyerConfirmService({ itemId, buyerId: req.telegramUser.id });
     return res.status(200).json({ success: true, payment: result });
   } catch (err) {
     return res.status(400).json({ error: err.message });
   }
 });
 
-router.post('/confirm/seller', async (req, res) => {
+router.post('/confirm/seller', requireTelegramAuth, async (req, res) => {
   try {
-    const { itemId, sellerId } = req.body;
-    if (!itemId || !sellerId) return res.status(400).json({ error: 'itemId and sellerId are required' });
-    const result = await sellerConfirmService({ itemId, sellerId });
+    const { itemId } = req.body;
+    if (!itemId) return res.status(400).json({ error: 'itemId is required' });
+    const result = await sellerConfirmService({ itemId, sellerId: req.telegramUser.id });
     return res.status(200).json({ success: true, payment: result });
   } catch (err) {
     return res.status(400).json({ error: err.message });
   }
 });
 
-router.post('/confirm/complete',  async (req, res) => {
+router.post('/confirm/complete', requireTelegramAuth, async (req, res) => {
   try {
-    const { itemId, sellerId } = req.body;
-    if (!itemId || !sellerId) return res.status(400).json({ error: 'itemId and sellerId are required' });
-    const result = await confirmItemService({ itemId, sellerId });
+    const { itemId } = req.body;
+    if (!itemId) return res.status(400).json({ error: 'itemId is required' });
+    // sellerId is forced to the authenticated user; the service should also
+    // independently verify this matches the item's actual seller.
+    const result = await confirmItemService({ itemId, sellerId: req.telegramUser.id });
     return res.status(200).json({ success: true, item: result });
   } catch (err) {
     return res.status(400).json({ error: err.message });
   }
 });
 
-router.get('/getUserFavourites/:id', async (req, res) => {
+router.get('/getUserFavourites/:id', requireTelegramAuth, async (req, res) => {
   try {
+    if (!(await isSelfOrAdmin(req, req.params.id))) {
+      return res.status(403).json({ error: "Доступ запрещён" });
+    }
     const response = await getUserFavouritesService(req.params.id);
     return res.status(200).json(response);
   } catch (error) {
@@ -344,6 +411,9 @@ router.get('/getUserFavourites/:id', async (req, res) => {
 
 router.get('/getUserItems/:id', async (req, res) => {
   try {
+    // Publicly listing a seller's active items is fine (needed for public
+    // profile pages) — getUserItemsService should only return public/active
+    // listings here, not drafts, balances, or other private fields.
     const { id } = req.params;
     const response = await getUserItemsService(id);
     res.status(200).json({ status: "success", data: response });
@@ -352,20 +422,30 @@ router.get('/getUserItems/:id', async (req, res) => {
   }
 });
 
-router.post('/deleteNotification', async (req, res) => {
+router.post('/deleteNotification', requireTelegramAuth, async (req, res) => {
   try {
     const { notificationId } = req.body;
     const numericId = Number(notificationId);
-    await deleteNotificationService(numericId);
+    // deleteNotificationService should verify the notification belongs to
+    // req.telegramUser.id before deleting; pass it through explicitly.
+    await deleteNotificationService(numericId, req.telegramUser.id);
     res.status(200).json({ status: "success" });
   } catch (e) {
     res.status(500).json({ status: "error", message: e.message });
   }
 });
 
-router.patch("/editItem", async (req, res) => {
+router.patch("/editItem", requireTelegramAuth, async (req, res) => {
   try {
-    const updatedData = await editItemService(req.body);
+    const item = await getItemService(req.body?.id);
+    if (!item) return res.status(404).json({ error: "Item not found" });
+    const owns = String(item.sellerId) === req.telegramUser.id;
+    if (!owns && !(await isSelfOrAdmin(req, req.telegramUser.id))) {
+      return res.status(403).json({ error: "Доступ запрещён" });
+    }
+    const body = { ...req.body };
+    delete body.sellerId; // never allow reassigning ownership via edit
+    const updatedData = await editItemService(body);
     return res.status(200).json({ success: true, data: updatedData });
   } catch (error) {
     if (
@@ -381,9 +461,11 @@ router.patch("/editItem", async (req, res) => {
 });
 
 const MAX_PAYOUT = 5000;
-router.post("/requestPayout", moneyLimiter, async (req, res) => {
+router.post("/requestPayout", moneyLimiter, requireTelegramAuth, async (req, res) => {
   try {
-    const result = await payoutService(req.body);
+    // userId is forced to the authenticated user — you can only ever request
+    // a payout of your own balance to your own configured wallet.
+    const result = await payoutService({ ...req.body, userId: req.telegramUser.id });
     return res.status(200).json({ success: true, newBalance: result.newBalance, wallet: result.wallet });
   } catch (error) {
     const badRequestErrors = [
@@ -404,7 +486,7 @@ router.post("/requestPayout", moneyLimiter, async (req, res) => {
   }
 });
 
-router.get("/payoutList", async (req, res) => {
+router.get("/payoutList", requireTelegramAuth, requireAdmin, async (req, res) => {
   try {
     const { payouts, stats } = await getPayoutsListService();
     return res.status(200).json({ success: true, payouts, stats });
@@ -414,7 +496,7 @@ router.get("/payoutList", async (req, res) => {
   }
 });
 
-router.post('/ban/:telegramId', adminActionLimiter, async (req, res) => {
+router.post('/ban/:telegramId', adminActionLimiter, requireTelegramAuth, requireAdmin, async (req, res) => {
   try {
     const result = await banUserService(req.params.telegramId, req.body);
     return res.status(200).json(result);
@@ -423,7 +505,7 @@ router.post('/ban/:telegramId', adminActionLimiter, async (req, res) => {
   }
 });
 
-router.post('/unban/:telegramId', adminActionLimiter, async (req, res) => {
+router.post('/unban/:telegramId', adminActionLimiter, requireTelegramAuth, requireAdmin, async (req, res) => {
   try {
     const result = await unbanUserService(req.params.telegramId);
     return res.status(200).json(result);
@@ -432,39 +514,47 @@ router.post('/unban/:telegramId', adminActionLimiter, async (req, res) => {
   }
 });
 
-router.post('/rate', async (req, res) => {
+router.post('/rate', requireTelegramAuth, async (req, res) => {
   try {
-    const { raterId, ratedId, itemId, description, ratingValue } = req.body;
-    const result = await rateItemService({ raterId, ratedId, itemId, description, ratingValue });
+    const { ratedId, itemId, description, ratingValue } = req.body;
+    // raterId is forced to the authenticated user — no fake reviews as
+    // someone else.
+    const result = await rateItemService({
+      raterId: req.telegramUser.id,
+      ratedId,
+      itemId,
+      description,
+      ratingValue,
+    });
     return res.status(201).json({ success: true, data: result });
   } catch (err) {
     return res.status(400).json({ error: err.message });
   }
 });
 
-router.post('/decline/buyer', async (req, res) => {
+router.post('/decline/buyer', requireTelegramAuth, async (req, res) => {
   try {
-    const { itemId, buyerId } = req.body;
-    if (!itemId || !buyerId) return res.status(400).json({ error: 'itemId and buyerId are required' });
-    const result = await buyerConfirmDeclineService({ itemId, buyerId });
+    const { itemId } = req.body;
+    if (!itemId) return res.status(400).json({ error: 'itemId is required' });
+    const result = await buyerConfirmDeclineService({ itemId, buyerId: req.telegramUser.id });
     return res.status(200).json({ success: true, data: result });
   } catch (err) {
     return res.status(400).json({ error: err.message });
   }
 });
 
-router.post('/decline/seller', async (req, res) => {
+router.post('/decline/seller', requireTelegramAuth, async (req, res) => {
   try {
-    const { itemId, sellerId } = req.body;
-    if (!itemId || !sellerId) return res.status(400).json({ error: 'itemId and sellerId are required' });
-    const result = await sellerConfirmDeclineService({ itemId, sellerId });
+    const { itemId } = req.body;
+    if (!itemId) return res.status(400).json({ error: 'itemId is required' });
+    const result = await sellerConfirmDeclineService({ itemId, sellerId: req.telegramUser.id });
     return res.status(200).json({ success: true, data: result });
   } catch (err) {
     return res.status(400).json({ error: err.message });
   }
 });
 
-router.post('/decline/complete', async (req, res) => {
+router.post('/decline/complete', requireTelegramAuth, async (req, res) => {
   try {
     const { itemId } = req.body;
     if (!itemId) return res.status(400).json({ error: 'itemId is required' });
@@ -475,11 +565,11 @@ router.post('/decline/complete', async (req, res) => {
   }
 });
 
-router.post('/decline/admin', adminActionLimiter, async (req, res) => {
+router.post('/decline/admin', adminActionLimiter, requireTelegramAuth, requireAdmin, async (req, res) => {
   try {
-    const { itemId, reason, telegramId } = req.body;
+    const { itemId, reason } = req.body;
     if (!itemId) return res.status(400).json({ error: 'itemId is required' });
-    const result = await adminDeclineItemService({ itemId, adminId: telegramId, reason });
+    const result = await adminDeclineItemService({ itemId, adminId: req.telegramUser.id, reason });
     return res.status(200).json({ success: true, data: result });
   } catch (err) {
     return res.status(400).json({ error: err.message });
@@ -487,16 +577,17 @@ router.post('/decline/admin', adminActionLimiter, async (req, res) => {
 });
 
 
-router.post('/createStarsInvoice', moneyLimiter, async (req, res) => {
+router.post('/createStarsInvoice', moneyLimiter, requireTelegramAuth, async (req, res) => {
   try {
-    const { userId, amount } = req.body;
- 
-    if (!userId || !Number.isInteger(amount) || amount < 1) {
+    const { amount } = req.body;
+
+    if (!Number.isInteger(amount) || amount < 1) {
       return res.status(400).json({ error: 'Некорректные параметры' });
     }
- 
-    const payload = JSON.stringify({ userId: String(userId), coins: amount });
- 
+
+
+    const payload = JSON.stringify({ userId: req.telegramUser.id, coins: amount });
+
     const invoiceLink = await bot.createInvoiceLink(
       'Пополнение баланса',
       `Начисление ${amount} коинов`,
@@ -505,7 +596,7 @@ router.post('/createStarsInvoice', moneyLimiter, async (req, res) => {
       'XTR',
       [{ label: 'Коины', amount }],
     );
- 
+
     res.json({ invoiceLink });
   } catch (error) {
     res.status(400).json({ error: error.message });

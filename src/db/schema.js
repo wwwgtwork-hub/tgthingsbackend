@@ -215,7 +215,7 @@ const payout = pgTable("payout", {
     .notNull()
     .references(() => users.telegramId),
   amount: integer("amount").notNull(),
-  wallet: text("wallet").notNull(),
+  wallet: text("wallet"),
   status: text("status").notNull().default("pending"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
@@ -225,8 +225,6 @@ const payout = pgTable("payout", {
     .notNull(),
 });
 
-// Идемпотентность Stars-платежей: уникальный chargeId не даёт
-// начислить коины дважды при повторной доставке апдейта от Telegram.
 const starPayments = pgTable("star_payments", {
   id: serial("id").primaryKey(),
   chargeId: text("charge_id").unique().notNull(),
