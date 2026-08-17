@@ -4,7 +4,8 @@ const app = express();
 const router = require("./routs/rout.js");
 const db = require("./db");
 app.use(cors({
-  origin: 'https://tgthings3444.web.app'
+  origin: 'https://tgthings3444.web.app',
+  credentials: true,
 }));
 app.use(express.json());
 app.use("/api", router);
