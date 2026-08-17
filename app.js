@@ -3,7 +3,9 @@ const cors = require("cors");
 const app = express();
 const router = require("./routs/rout.js");
 const db = require("./db");
-app.use(cors());
+app.use(cors(
+  origin: ["https://tgthings3444.web.app"]
+));
 app.use(express.json());
 app.use("/api", router);
 const PORT = process.env.PORT || 5000;
