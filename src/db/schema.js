@@ -225,6 +225,7 @@ const payout = pgTable("payout", {
     .notNull(),
 });
 
+
 const starPayments = pgTable("star_payments", {
   id: serial("id").primaryKey(),
   chargeId: text("charge_id").unique().notNull(),
