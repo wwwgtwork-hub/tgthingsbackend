@@ -48,14 +48,6 @@ const generalLimiter = rateLimit({
   message: { status: "error", message: "Слишком много запросов, попробуйте позже" },
 });
 
-const registerLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: "Слишком много попыток регистрации, попробуйте позже" },
-});
-
 const moneyLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
@@ -87,7 +79,7 @@ router.use(generalLimiter);
 // item browsing is meant to be public)
 // ------------------------------------
 
-router.post("/register", registerLimiter, async (req, res) => {
+router.post("/register", async (req, res) => {
   try {
     const { initData } = req.body;
     if (!initData) {
