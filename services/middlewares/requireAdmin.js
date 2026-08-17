@@ -1,5 +1,5 @@
 const { eq } = require("drizzle-orm");
-const { db } = require("../db.js");
+const { db } = require("../../db.js");
 const { users } = require("../src/db/schema.js");
 
 
