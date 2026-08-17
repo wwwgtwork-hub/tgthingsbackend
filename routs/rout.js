@@ -38,6 +38,7 @@ const { eq } = require('drizzle-orm');
 const { users } = require('../src/db/schema.js');
 const { requireTelegramAuth } = require("../services/middlewares/telegramAuth.js");
 const { requireAdmin } = require("../services/middlewares/requireAdmin.js");
+const { verifyTelegramInitData } = require('./verifyTelegramInitData');
 const { isSelfOrAdmin } = require("../services/middlewares/isSelfOrAdmin.js");
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -88,7 +89,23 @@ router.use(generalLimiter);
 
 router.post("/register", registerLimiter, async (req, res) => {
   try {
-    const result = await registerUserService(req.body);
+    const { initData } = req.body;
+    if (!initData) {
+      return res.status(400).json({ error: 'initData отсутствует' });
+    }
+
+    const rawUser = verifyTelegramInitData(initData, process.env.BOT_TOKEN);
+    if (!rawUser?.id) {
+      return res.status(400).json({ error: 'Не удалось определить пользователя' });
+    }
+
+    const telegramUser = {
+      id: rawUser.id,
+      username: rawUser.username || null,
+      firstName: rawUser.first_name || null,
+    };
+
+    const result = await registerUserService({ telegramUser });
     res.status(201).json(result);
   } catch (error) {
     res.status(400).json({ error: error.message });
