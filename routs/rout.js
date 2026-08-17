@@ -38,7 +38,7 @@ const { eq } = require('drizzle-orm');
 const { users } = require('../src/db/schema.js');
 const { requireTelegramAuth } = require("../services/middlewares/telegramAuth.js");
 const { requireAdmin } = require("../services/middlewares/requireAdmin.js");
-const { verifyTelegramInitData } = require('./verifyTelegramInitData');
+const { verifyTelegramInitData } = require('./VerifyTelegramInitData');
 const { isSelfOrAdmin } = require("../services/middlewares/isSelfOrAdmin.js");
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
