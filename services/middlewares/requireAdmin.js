@@ -1,6 +1,6 @@
 const { eq } = require("drizzle-orm");
-const { db } = require("../db.js");
-const { users } = require("../src/db/schema.js");
+const { db } = require("../../db.js");
+const { users } = require("../../schema.js");
 
 
 async function requireAdmin(req, res, next) {

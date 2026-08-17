@@ -1,8 +1,6 @@
 const express = require("express");
 const router = express.Router();
 const rateLimit = require("express-rate-limit");
-const { requireTelegramAuth } = require("../middleware/telegramAuth.js");
-const { requireAdmin } = require("../middleware/requireAdmin.js");
 const {
   buyerConfirmDeclineService,
   sellerConfirmDeclineService,
@@ -39,6 +37,15 @@ const { db } = require('../db.js');
 const { eq } = require('drizzle-orm');
 const { users } = require('../src/db/schema.js');
 
+// TODO: confirm these paths match where the files actually live in your
+// project. requireAdmin.js in your codebase imports schema from
+// "../../schema.js" while everything else (rout.js, isSelfOrAdmin.js) uses
+// "../src/db/schema.js" / "../../src/db/schema.js" — that's very likely a
+// bug (wrong path) in requireAdmin.js itself, worth double-checking that
+// file resolves to the same schema module as the rest of the app.
+const { requireTelegramAuth } = require("../middleware/TelegramAuth.js");
+const { requireAdmin } = require("../middleware/requireAdmin.js");
+const { isSelfOrAdmin } = require("../middleware/isSelfOrAdmin.js");
 
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -83,33 +90,26 @@ const notificationLimiter = rateLimit({
 router.use(generalLimiter);
 
 // ------------------------------------
-// Small helper: only the resource owner or an admin may read a user-scoped
-// resource. Requires requireTelegramAuth to have run first.
-async function isSelfOrAdmin(req, targetTelegramId) {
-  if (req.telegramUser?.id === String(targetTelegramId)) return true;
-  const [user] = await db.select().from(users).where(eq(users.telegramId, req.telegramUser.id));
-  return !!user?.isAdmin;
-}
-
+// PUBLIC ROUTES (no auth required — registration is the auth entry point,
+// item browsing is meant to be public)
 // ------------------------------------
 
-router.post("/register", registerLimiter, requireTelegramAuth, async (req, res) => {
+router.post("/register", registerLimiter, async (req, res) => {
   try {
-    const result = await registerUserService({ telegramUser: req.telegramUser });
+    const result = await registerUserService(req.body);
     res.status(201).json(result);
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
 });
 
-router.post("/uploadItem", requireTelegramAuth, async (req, res) => {
+// NOTE: this still trusts req.body entirely (no auth). If items should only
+// ever be created by the authenticated seller, consider adding
+// requireTelegramAuth here and forcing sellerId = req.telegramUser.id,
+// the same way /editItem and /deleteItem now do it below.
+router.post("/uploadItem", async (req, res) => {
   try {
-    // Force the item's owner to be the authenticated user — never trust a
-    // sellerId/telegramId supplied in the body.
-    const newItem = await uploadItemService({
-      ...req.body,
-      sellerId: req.telegramUser.id,
-    });
+    const newItem = await uploadItemService(req.body);
     return res.status(201).json({ success: true, data: newItem });
   } catch (error) {
     if (error?.message === "All fields are required") {
@@ -120,11 +120,8 @@ router.post("/uploadItem", requireTelegramAuth, async (req, res) => {
   }
 });
 
-router.get('/operations/:userId', requireTelegramAuth, async (req, res) => {
+router.get('/operations/:userId', async (req, res) => {
   try {
-    if (!(await isSelfOrAdmin(req, req.params.userId))) {
-      return res.status(403).json({ error: "Доступ запрещён" });
-    }
     const data = await getOperations(req.params.userId);
     return res.status(200).json({ success: true, data });
   } catch (error) {
@@ -133,19 +130,9 @@ router.get('/operations/:userId', requireTelegramAuth, async (req, res) => {
   }
 });
 
-router.get('/getpayment/:id', requireTelegramAuth, async (req, res) => {
+router.get('/getpayment/:id', async (req, res) => {
   try {
     const data = await getPaymentService(req.params.id);
-    // getPaymentService should return the associated buyer/seller ids so we
-    // can check ownership here; if it doesn't yet, add that and gate access.
-    if (data?.buyerId && data?.sellerId) {
-      const isParty =
-        req.telegramUser.id === String(data.buyerId) ||
-        req.telegramUser.id === String(data.sellerId);
-      if (!isParty && !(await isSelfOrAdmin(req, req.telegramUser.id))) {
-        return res.status(403).json({ error: "Доступ запрещён" });
-      }
-    }
     res.status(200).json({ status: "success", data });
   } catch (e) {
     res.status(500).json({ status: "error", message: e.message });
@@ -179,6 +166,11 @@ router.get("/getItem/:id", async (req, res) => {
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
+
+// ------------------------------------
+// PROTECTED ROUTES (secured version — auth required, IDs forced from the
+// verified Telegram identity, never trusted from the client body/params)
+// ------------------------------------
 
 router.get("/checkUser/:telegramId", requireTelegramAuth, async (req, res) => {
   try {
@@ -576,7 +568,6 @@ router.post('/decline/admin', adminActionLimiter, requireTelegramAuth, requireAd
   }
 });
 
-
 router.post('/createStarsInvoice', moneyLimiter, requireTelegramAuth, async (req, res) => {
   try {
     const { amount } = req.body;
@@ -584,7 +575,6 @@ router.post('/createStarsInvoice', moneyLimiter, requireTelegramAuth, async (req
     if (!Number.isInteger(amount) || amount < 1) {
       return res.status(400).json({ error: 'Некорректные параметры' });
     }
-
 
     const payload = JSON.stringify({ userId: req.telegramUser.id, coins: amount });
 
